@@ -32,17 +32,24 @@ type yahooStock struct {
 	}
 }
 
+type Metric struct {
+	T     time.Time
+	Value float64
+}
+
+type Price struct {
+	TimeStamp time.Time
+	Low       float64
+	Close     float64
+	Volume    int
+	High      float64
+	Open      float64
+}
+
 type Stock struct {
 	Symbol    string
 	TimeZone  string
-	Indicator []struct {
-		TimeStamp time.Time
-		Low       float64
-		Close     float64
-		Volume    int
-		High      float64
-		Open      float64
-	}
+	Indicator []Price
 }
 
 func newYahooStock() *yahooStock {
@@ -108,23 +115,121 @@ func converYahooStockToStock(ys *yahooStock) (*Stock, error) {
 	loc := time.FixedZone(ys.Chart.Result[0].Meta.Timezone, -4*3600) //force timezone record yahoostock
 
 	for i, t := range ts {
-		var tmpIndicator struct {
-			TimeStamp time.Time
-			Low       float64
-			Close     float64
-			Volume    int
-			High      float64
-			Open      float64
-		}
-		tmpIndicator.TimeStamp = time.Unix(t, 0).In(loc)
-		tmpIndicator.Low = quote.Low[i]
-		tmpIndicator.Close = quote.Close[i]
-		tmpIndicator.Volume = quote.Volume[i]
-		tmpIndicator.High = quote.High[i]
-		tmpIndicator.Open = quote.Open[i]
+		var p Price
+		p.TimeStamp = time.Unix(t, 0).In(loc)
+		p.Low = quote.Low[i]
+		p.Close = quote.Close[i]
+		p.Volume = quote.Volume[i]
+		p.High = quote.High[i]
+		p.Open = quote.Open[i]
 
-		s.Indicator = append(s.Indicator, tmpIndicator)
+		s.Indicator = append(s.Indicator, p)
 	}
 	s.Symbol = symbol
 	return s, nil
+}
+
+/*
+calculate RSV, the RSV formula is
+n_day RSV = \frac{ClosingP_n - LowP_n}{HighP_n - LowP_n} * 100
+
+period(n) must equal to len(prices)
+*/
+func RSV(period int, prices []Price) (float64, error) {
+	if len(prices) == 0 {
+		return 0, errors.New("Input prices is null.")
+	}
+
+	if period != len(prices) {
+		return 0, errors.New("Period must equal to prices len.")
+	}
+
+	//closing price
+	cp := prices[len(prices)-1].Close
+
+	//find lowest and highest price during the period
+	lp := prices[0].Low
+	hp := prices[0].High
+	for _, p := range prices {
+		if p.Low < lp {
+			lp = p.Low
+		}
+
+		if p.High > hp {
+			hp = p.High
+		}
+	}
+
+	if hp == lp {
+		return 50, nil
+	}
+
+	return (cp - lp) / (hp - lp) * 100, nil
+
+}
+
+func (s *Stock) GetKDJMetrics(period int) ([]Metric, []Metric, []Metric, error) {
+	if period > len(s.Indicator) {
+		return nil, nil, nil, errors.New("Period should great than len of stock indicators")
+	}
+
+	k := make([]Metric, 0)
+	d := make([]Metric, 0)
+	j := make([]Metric, 0)
+
+	//init kmetric
+	kMetr := 50.0
+	//init dmetric
+	dMetr := 50.0
+
+	//init jmetric
+	jMetr := 0.0
+
+	//start of window
+	swindow := 0
+	//end of window
+	ewindow := period
+
+	for ewindow <= len(s.Indicator) {
+		window := s.Indicator[swindow:ewindow]
+		rsv, err := RSV(period, window)
+		if err != nil {
+			return nil, nil, nil, err
+		}
+
+		kMetr = (2.0/3.0)*kMetr + (1.0/3.0)*rsv
+		dMetr = (2.0/3.0)*dMetr + (1.0/3.0)*kMetr
+		jMetr = 3*kMetr - 2*dMetr
+		t := window[len(window)-1].TimeStamp
+
+		k = append(k, Metric{T: t, Value: kMetr})
+		d = append(d, Metric{T: t, Value: dMetr})
+		j = append(j, Metric{T: t, Value: jMetr})
+
+		//move window
+		swindow++
+		ewindow++
+
+	}
+
+	return k, d, j, nil
+
+}
+
+func (s *Stock) SMA(period int) ([]Metric, error) {
+	SMAMetr := make([]Metric, 0)
+	//TODO
+	return SMAMetr, nil
+}
+
+func (s *Stock) EMA(period int) ([]Metric, error) {
+	EMAMetr := make([]Metric, 0)
+	//TODO
+	return EMAMetr, nil
+}
+
+func (s *Stock) MACD(period int) ([]Metric, error) {
+	MACDMetr := make([]Metric, 0)
+	//TODO
+	return MACDMetr, nil
 }
